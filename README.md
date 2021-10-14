@@ -1,6 +1,11 @@
 # wormhole-rs
 
-A rust implementation of ipc channel.
+Wormhole is a simple IPC implementation inspired by the channel interface from
+both Golang and Rust::mspc. The main use case is to allow for continues sequence
+process (CSP) style multi process programming, similar to how channels are used in
+multi threaded programing. Here, we use a simple protocol to transmit serialized
+data through anonimious unix domain socket by prefixing the length of the
+serialized data.
 
 ## Example
 
