@@ -11,8 +11,8 @@ serialized data.
 
 I found two projects before I decided to implement my own crate for
 inter-process IPC channel. The first one is
-[tinu-nix-ipc]<https://github.com/unrelentingtech/tiny-nix-ipc> and the second one is
-[ipc-channel]<https://github.com/servo/ipc-channel>. Both of these project is much more complex
+[tinu-nix-ipc](https://github.com/unrelentingtech/tiny-nix-ipc) and the second one is
+[ipc-channel](https://github.com/servo/ipc-channel). Both of these project is much more complex
 and offers much more features. The aim of the `wormhole-rs` project is to have a
 simplified implementation without any of the complexity. As a result, we decided to
 only support:
