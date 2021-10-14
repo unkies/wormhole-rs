@@ -1,19 +1,9 @@
-use nix::{errno::Errno, sys::socket};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::{error, fmt, io, marker::PhantomData, os::unix::prelude::RawFd};
-use thiserror::Error;
+mod error;
 
-#[derive(Error, Debug)]
-pub enum WormholeError {
-    #[error("sending on disconnected channel")]
-    SendError,
-    #[error("read error")]
-    RecvError,
-    #[error(transparent)]
-    IOError(#[from] std::io::Error),
-}
-
-/// Implementation
+use error::Result;
+use nix::sys::{socket, uio};
+use serde::{Deserialize, Serialize};
+use std::{marker::PhantomData, os::unix::prelude::RawFd};
 
 #[derive(Debug)]
 pub struct WormholeReceiver<T> {
@@ -30,22 +20,45 @@ impl<T> WormholeSender<T>
 where
     T: Serialize,
 {
-    pub fn send(&self, object: T) -> Result<(), WormholeError> {
-        // let payload = serde_json::to_vec(&object)?;
+    pub fn send(&self, object: T) -> Result<()> {
+        let payload = serde_json::to_vec(&object)?;
 
         Ok(())
+    }
+
+    pub fn send_iovec(
+        &mut self,
+        iov: &[uio::IoVec<&[u8]>],
+        fds: Option<&[RawFd]>,
+    ) -> Result<usize> {
+        if let Some(rfds) = fds {
+            socket::sendmsg(
+                self.sender,
+                iov,
+                &[socket::ControlMessage::ScmRights(rfds)],
+                socket::MsgFlags::empty(),
+                None,
+            )
+            .map_err(|e| e.into())
+        } else {
+            socket::sendmsg(self.sender, iov, &[], socket::MsgFlags::empty(), None)
+                .map_err(|e| e.into())
+        }
+    }
+
+    pub fn send_slice(&mut self, data: &[u8], fds: Option<&[RawFd]>) -> Result<usize> {
+        let iov = [uio::IoVec::from_slice(data)];
+        self.send_iovec(&iov[..], fds)
     }
 }
 
 impl<T> WormholeReceiver<T> {
-    fn recv(&self) -> Result<T, WormholeError> {
+    fn recv(&self) -> Result<T> {
         todo!()
     }
 }
 
-/// Public APIs
-
-pub fn channel<T>() -> Result<(WormholeSender<T>, WormholeReceiver<T>), io::Error>
+pub fn channel<T>() -> Result<(WormholeSender<T>, WormholeReceiver<T>)>
 where
     T: for<'de> Deserialize<'de> + Serialize,
 {
@@ -62,13 +75,13 @@ where
 }
 
 // Use socketpair as the underlying pipe.
-fn unix_channel() -> Result<(RawFd, RawFd), Errno> {
-    socket::socketpair(
+fn unix_channel() -> Result<(RawFd, RawFd)> {
+    Ok(socket::socketpair(
         socket::AddressFamily::Unix,
         socket::SockType::SeqPacket,
         None,
         socket::SockFlag::SOCK_CLOEXEC,
-    )
+    )?)
 }
 
 #[cfg(test)]
