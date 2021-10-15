@@ -1,7 +1,10 @@
 mod error;
 
-use error::Result;
-use nix::sys::{socket, uio};
+use error::{Result, WormholeError};
+use nix::{
+    sys::{socket, uio},
+    unistd,
+};
 use serde::{Deserialize, Serialize};
 use std::{marker::PhantomData, os::unix::prelude::RawFd};
 
@@ -58,6 +61,10 @@ where
 
         Ok(())
     }
+
+    pub fn close(&self) -> Result<()> {
+        Ok(unistd::close(self.sender)?)
+    }
 }
 
 impl<T> WormholeReceiver<T>
@@ -73,8 +80,10 @@ where
             )
         })];
         let _ = socket::recvmsg(self.receiver, &iov, None, socket::MsgFlags::MSG_PEEK)?;
-
-        Ok(len)
+        match len {
+            0 => Err(WormholeError::ConnectionBroken),
+            _ => Ok(len),
+        }
     }
 
     fn recv_into_iovec<F>(&mut self, iov: &[uio::IoVec<&mut [u8]>]) -> Result<(usize, Option<F>)>
@@ -120,7 +129,7 @@ where
         let msg_len = self.peek_size_iovec()?;
         let mut len: u64 = 0;
         let mut buf = vec![0u8; msg_len as usize];
-        let (_, fds) = {
+        let (bytes, fds) = {
             let iov = [
                 uio::IoVec::from_mut_slice(unsafe {
                     std::slice::from_raw_parts_mut(
@@ -132,7 +141,11 @@ where
             ];
             self.recv_into_iovec(&iov)?
         };
-        Ok((buf, fds))
+
+        match bytes {
+            0 => Err(WormholeError::ConnectionBroken),
+            _ => Ok((buf, fds)),
+        }
     }
 
     // Recv the next message of type T.
@@ -150,6 +163,10 @@ where
     {
         let (buf, fds) = self.recv_into_buf_with_len::<F>()?;
         Ok((serde_json::from_slice(&buf[..])?, fds))
+    }
+
+    pub fn close(&self) -> Result<()> {
+        Ok(unistd::close(self.receiver)?)
     }
 }
 
@@ -181,7 +198,7 @@ fn unix_channel() -> Result<(RawFd, RawFd)> {
 
 #[cfg(test)]
 mod tests {
-    use crate::channel;
+    use crate::{channel, error::WormholeError};
     use nix::sys::wait;
     use serde::{Deserialize, Serialize};
 
@@ -193,7 +210,7 @@ mod tests {
     }
 
     #[test]
-    fn basic() {
+    fn test_basic() {
         let (mut sender, mut receiver) =
             channel::<TestMessage>().expect("failed to create channel");
         let test_message = TestMessage {
@@ -217,6 +234,28 @@ mod tests {
                 sender
                     .send(test_message)
                     .expect("failed to send from the child process");
+                std::process::exit(0);
+            }
+        };
+    }
+
+    #[test]
+    // Test the recv connection will break in the case that the other process terminates.
+    fn test_breakup() {
+        let (sender, mut receiver) = channel::<TestMessage>().expect("failed to create channel");
+        match unsafe { nix::unistd::fork().expect("failed fork") } {
+            nix::unistd::ForkResult::Parent { child } => {
+                sender.close().expect("failed to close duplicated sender");
+                let ret = receiver
+                    .recv()
+                    .expect_err("expecting a connection broken error");
+                assert!(
+                    matches!(ret, WormholeError::ConnectionBroken),
+                    "expecting connection broken error"
+                );
+                wait::waitpid(child, None).expect("failed wait for pid");
+            }
+            nix::unistd::ForkResult::Child => {
                 std::process::exit(0);
             }
         };

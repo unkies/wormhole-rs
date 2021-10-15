@@ -14,6 +14,9 @@ pub enum WormholeError {
     /// Happens when an error happens during serialization or deserialization.
     #[error("serialization/deserialization failed")]
     Serialization(#[from] serde_json::Error),
+
+    #[error("connection broken")]
+    ConnectionBroken,
 }
 
 pub type Result<T> = std::result::Result<T, WormholeError>;
