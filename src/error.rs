@@ -2,7 +2,7 @@ use std::io;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum WormholeError {
+pub enum Error {
     /// Happens when an error happens during io operations.
     #[error("io operation failed")]
     Io(#[from] io::Error),
@@ -19,4 +19,4 @@ pub enum WormholeError {
     ConnectionBroken,
 }
 
-pub type Result<T> = std::result::Result<T, WormholeError>;
+pub type Result<T> = std::result::Result<T, Error>;

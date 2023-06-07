@@ -1,6 +1,6 @@
 mod error;
 
-use error::{Result, WormholeError};
+use error::{Error, Result};
 use nix::{
     sys::{socket, uio},
     unistd,
@@ -9,17 +9,17 @@ use serde::{Deserialize, Serialize};
 use std::{marker::PhantomData, os::unix::prelude::RawFd};
 
 #[derive(Debug)]
-pub struct WormholeReceiver<T> {
+pub struct Receiver<T> {
     receiver: RawFd,
     phantom: PhantomData<T>,
 }
 
-pub struct WormholeSender<T> {
+pub struct Sender<T> {
     sender: RawFd,
     phantom: PhantomData<T>,
 }
 
-impl<T> WormholeSender<T>
+impl<T> Sender<T>
 where
     T: Serialize,
 {
@@ -67,7 +67,7 @@ where
     }
 }
 
-impl<T> WormholeReceiver<T>
+impl<T> Receiver<T>
 where
     T: serde::de::DeserializeOwned,
 {
@@ -81,7 +81,7 @@ where
         })];
         let _ = socket::recvmsg(self.receiver, &iov, None, socket::MsgFlags::MSG_PEEK)?;
         match len {
-            0 => Err(WormholeError::ConnectionBroken),
+            0 => Err(Error::ConnectionBroken),
             _ => Ok(len),
         }
     }
@@ -143,7 +143,7 @@ where
         };
 
         match bytes {
-            0 => Err(WormholeError::ConnectionBroken),
+            0 => Err(Error::ConnectionBroken),
             _ => Ok((buf, fds)),
         }
     }
@@ -170,16 +170,16 @@ where
     }
 }
 
-pub fn channel<T>() -> Result<(WormholeSender<T>, WormholeReceiver<T>)>
+pub fn channel<T>() -> Result<(Sender<T>, Receiver<T>)>
 where
     T: for<'de> Deserialize<'de> + Serialize,
 {
     let (os_sender, os_receiver) = unix_channel()?;
-    let receiver = WormholeReceiver {
+    let receiver = Receiver {
         receiver: os_receiver,
         phantom: PhantomData,
     };
-    let sender = WormholeSender {
+    let sender = Sender {
         sender: os_sender,
         phantom: PhantomData,
     };
@@ -198,7 +198,7 @@ fn unix_channel() -> Result<(RawFd, RawFd)> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{channel, error::WormholeError};
+    use crate::{channel, error::Error};
     use nix::sys::wait;
     use serde::{Deserialize, Serialize};
 
@@ -250,7 +250,7 @@ mod tests {
                     .recv()
                     .expect_err("expecting a connection broken error");
                 assert!(
-                    matches!(ret, WormholeError::ConnectionBroken),
+                    matches!(ret, Error::ConnectionBroken),
                     "expecting connection broken error"
                 );
                 wait::waitpid(child, None).expect("failed wait for pid");
