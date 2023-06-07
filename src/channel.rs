@@ -15,7 +15,7 @@ pub enum Error {
 
     /// Happens when underlying syscall returns an error.
     #[error("syscall error")]
-    Sys(#[from] nix::errno::Errno),
+    Nix(#[from] nix::errno::Errno),
 
     /// Happens when an error happens during serialization or deserialization.
     #[error("serialization/deserialization failed")]
