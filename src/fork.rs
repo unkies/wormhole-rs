@@ -17,7 +17,7 @@ pub enum Error {
 /// Run the callback function in a forked process.
 pub fn fork_and_run<F>(cb: F) -> Result<(), Error>
 where
-    F: FnOnce() -> () + std::panic::UnwindSafe,
+    F: FnOnce() -> (),
 {
     let (mut sender, mut receiver) = crate::channel::channel::<Option<String>>()?;
     match unsafe { nix::unistd::fork().map_err(Error::Fork)? } {
@@ -39,7 +39,12 @@ where
                 // is safe to ignore here.
                 let _ = panic_info_tx.send(format!("there is a panic at: {:?}", info.location()));
             }));
-            let did_panic = match std::panic::catch_unwind(cb) {
+            // We assert the cb as unwind safe. We can do it here because we
+            // will throw away the process at the end, so there is no need to
+            // provide the guarantee that the closure will be able to unwind
+            // properly. As long as we can return the panic information, we are
+            // good.
+            let did_panic = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(cb)) {
                 Ok(_) => None,
                 Err(_) => {
                     // If we can't receive the panic information, there is
@@ -81,5 +86,21 @@ mod tests {
             }
             _ => panic!("the error should be a panic error"),
         }
+    }
+
+    #[test]
+    fn test_error() {
+        // In general, rust error types are not serializable. So we can't use it
+        // with the channels. Using a `Option<String>` as a cheap simulation of
+        // errors. Most of the time, we can about the error message, not the
+        // error type.
+        let (mut sender, mut receiver) =
+            crate::channel::channel::<Option<String>>().expect("failed to create channel");
+        crate::fork::fork_and_run(|| {
+            let _ = sender.send(Some("there is an error".to_string()));
+        })
+        .expect("failed to run");
+        let ret = receiver.recv().expect("failed to receive error");
+        assert_eq!(ret, Some("there is an error".to_string()));
     }
 }

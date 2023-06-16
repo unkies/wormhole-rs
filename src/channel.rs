@@ -25,7 +25,7 @@ pub enum Error {
     ConnectionBroken,
 }
 
-pub type Result<T> = std::result::Result<T, Error>;
+type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
 pub struct Receiver<T> {
