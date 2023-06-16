@@ -1,3 +1,5 @@
+use std::sync::{mpsc, Arc, Mutex};
+
 use nix::sys::wait;
 use serde::{Deserialize, Serialize};
 
@@ -47,8 +49,8 @@ pub enum Error {
     Wait(#[source] nix::Error),
     #[error("failed to run function in child process")]
     Execution(#[source] Box<dyn std::error::Error + Send + Sync>),
-    #[error("the closure caused the child process to panic")]
-    Panic,
+    #[error("the closure caused the child process to panic: {0}")]
+    Panic(String),
 }
 
 // There is no easy way to allow arbitury error type, so the best we can do is
@@ -81,15 +83,27 @@ where
             res.map_err(|err| Error::Execution(Box::new(err)))?;
         }
         nix::unistd::ForkResult::Child => {
-            // Set the panic hook to do nothing, so that the child process will
-            // transparently catch the panic. No need to restore the panic hook
-            // because we will just exit the process anyway.
-            std::panic::set_hook(Box::new(|_info| {
-                // do nothing
+            // Given rust ownership model, we can't shares a memory pointer for
+            // the panic hook to pass the panic information to outside of the
+            // panic hook. So we have to use a channel to pass the information.
+            let (panic_info_tx, panic_info_rx) = mpsc::sync_channel::<String>(1);
+            std::panic::set_hook(Box::new(move |info| {
+                // The only possible error is if the receiver is closed, so it
+                // is safe to ignore here.
+                let _ = panic_info_tx.send(format!("{:?}", info));
             }));
             let test_result = match std::panic::catch_unwind(cb) {
                 Ok(ret) => ret.map_err(|err| SerializableError::new(&err)),
-                Err(_) => Err(SerializableError::new(&Error::Panic)),
+                Err(_) => {
+                    // If we can't receive the panic information, there is
+                    // nothing we can do. So we set the reason to unknown and
+                    // continue.
+                    let reason = match panic_info_rx.try_recv() {
+                        Ok(reason) => reason,
+                        Err(_) => "unknown".to_string(),
+                    };
+                    Err(SerializableError::new(&Error::Panic(reason.clone())))
+                }
             };
 
             // If we can't send the error to the parent process, there is
@@ -130,9 +144,11 @@ mod tests {
 
     #[test]
     fn test_panic() {
-        crate::fork::fork_and_run(|| {
+        let err = crate::fork::fork_and_run(|| {
             panic!("there is a panic");
         })
         .expect_err("should fail");
+        println!("{:#}", err);
+        assert!(false);
     }
 }
